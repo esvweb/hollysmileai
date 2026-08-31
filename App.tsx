@@ -118,7 +118,7 @@ function App() {
               <img
                 src={LOGO_SRC}
                 alt="Esvita Clinic"
-                className="h-8 sm:h-10 w-auto object-contain"
+                className="h-10 sm:h-12 w-auto object-contain"
                 onError={() => setLogoFailed(true)}
               />
             )}
