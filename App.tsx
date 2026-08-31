@@ -1,43 +1,104 @@
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Uploader } from './components/Uploader';
 import { generateSmileMakeover } from './services/geminiService';
 import { addWatermark } from './utils/watermark';
-import { ProcessingState } from './types';
+import { ProcessingState, Provider } from './types';
+
+const PROVIDER_STORAGE_KEY = 'smile-ai-provider';
+
+// Served from our own domain on purpose. The logo used to be hotlinked from
+// esvitaclinic.com, which is court-blocked in Turkey and answers on a
+// self-signed certificate, so the image never loaded for local visitors.
+// Drop the real file at public/esvita-logo.svg; until then the header falls
+// back to a plain wordmark instead of a broken-image icon.
+const LOGO_SRC = '/esvita-logo.svg';
+
+const PROVIDER_LABEL: Record<Provider, string> = {
+  gemini: 'Gemini',
+  openai: 'OpenAI',
+};
+
+// OpenAI's edit endpoint takes ~45s against Gemini's ~6s, so the two need
+// different pacing or the status text runs out long before the image arrives.
+const PROGRESS_STEPS: Record<Provider, { at: number; message: string }[]> = {
+  gemini: [
+    { at: 1500, message: 'Identifying teeth geometry...' },
+    { at: 3500, message: 'Designing smile makeover...' },
+    { at: 5500, message: 'Applying Esvita perfection...' },
+  ],
+  openai: [
+    { at: 3000, message: 'Identifying teeth geometry...' },
+    { at: 10000, message: 'Designing smile makeover...' },
+    { at: 20000, message: 'Reconstructing every tooth...' },
+    { at: 32000, message: 'Applying Esvita perfection...' },
+    { at: 45000, message: 'Almost there, finishing the render...' },
+  ],
+};
+
+const readStoredProvider = (): Provider => {
+  try {
+    return localStorage.getItem(PROVIDER_STORAGE_KEY) === 'openai' ? 'openai' : 'gemini';
+  } catch {
+    return 'gemini';
+  }
+};
 
 function App() {
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [processingState, setProcessingState] = useState<ProcessingState>({ status: 'idle' });
+  const [provider, setProvider] = useState<Provider>(readStoredProvider);
+  const [logoFailed, setLogoFailed] = useState(false);
+  const timers = useRef<number[]>([]);
+
+  const clearTimers = useCallback(() => {
+    timers.current.forEach(window.clearTimeout);
+    timers.current = [];
+  }, []);
+
+  // The "Powered by" label doubles as a hidden switch between image providers.
+  const toggleProvider = useCallback(() => {
+    setProvider(current => {
+      const next: Provider = current === 'gemini' ? 'openai' : 'gemini';
+      try {
+        localStorage.setItem(PROVIDER_STORAGE_KEY, next);
+      } catch {
+        // Private browsing: the choice simply won't survive a reload.
+      }
+      return next;
+    });
+  }, []);
 
   const handleImageUpload = async (base64: string) => {
     setOriginalImage(base64);
     setGeneratedImage(null);
     setProcessingState({ status: 'processing', message: 'Analyzing facial structure...' });
 
-    try {
-      // Simulate steps for UX
-      setTimeout(() => setProcessingState(p => ({ ...p, message: 'Identifying teeth geometry...' })), 1500);
-      setTimeout(() => setProcessingState(p => ({ ...p, message: 'Designing smile makeover...' })), 3500);
-      setTimeout(() => setProcessingState(p => ({ ...p, message: 'Applying Esvita perfection...' })), 5500);
+    clearTimers();
+    timers.current = PROGRESS_STEPS[provider].map(step =>
+      window.setTimeout(() => setProcessingState(p => ({ ...p, message: step.message })), step.at)
+    );
 
-      // 1. Generate AI Smile
-      const rawResult = await generateSmileMakeover(base64);
-      
-      // 2. Add Watermark
+    try {
+      const rawResult = await generateSmileMakeover(base64, provider);
+
+      clearTimers();
       setProcessingState(p => ({ ...p, message: 'Finalizing simulation...' }));
       const watermarkedResult = await addWatermark(rawResult);
 
       setGeneratedImage(watermarkedResult);
       setProcessingState({ status: 'success' });
     } catch (error: any) {
-      setProcessingState({ 
-        status: 'error', 
-        message: error.message || "Failed to generate smile. Ensure your API key is set and valid." 
+      clearTimers();
+      setProcessingState({
+        status: 'error',
+        message: error?.message || 'Failed to generate smile. Please try again.',
       });
     }
   };
 
   const resetApp = () => {
+    clearTimers();
     setOriginalImage(null);
     setGeneratedImage(null);
     setProcessingState({ status: 'idle' });
@@ -49,24 +110,48 @@ function App() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img 
-              src="https://esvitaclinic.com/wp-content/uploads/2025/06/esvita-logo.svg" 
-              alt="Esvita Clinic" 
-              className="h-8 sm:h-10 w-auto object-contain"
-            />
+            {logoFailed ? (
+              <span className="text-lg sm:text-xl font-bold tracking-[0.2em] text-slate-800">
+                ESVITA
+              </span>
+            ) : (
+              <img
+                src={LOGO_SRC}
+                alt="Esvita Clinic"
+                className="h-8 sm:h-10 w-auto object-contain"
+                onError={() => setLogoFailed(true)}
+              />
+            )}
             <div className="hidden sm:block h-6 w-px bg-slate-200 mx-1"></div>
             <h1 className="hidden sm:block text-xl font-bold tracking-tight bg-gradient-to-r from-teal-600 to-blue-600 bg-clip-text text-transparent">
               Hollywood Smile AI
             </h1>
           </div>
-          {originalImage && (
-            <button 
-              onClick={resetApp}
-              className="text-sm font-medium text-slate-500 hover:text-teal-600 transition-colors"
+
+          <div className="flex items-center gap-4">
+            {originalImage && (
+              <button 
+                onClick={resetApp}
+                className="text-sm font-medium text-slate-500 hover:text-teal-600 transition-colors"
+              >
+                Start Over
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={toggleProvider}
+              disabled={processingState.status === 'processing'}
+              aria-label={`Powered by ${PROVIDER_LABEL[provider]}. Click to switch engine.`}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 transition-colors select-none disabled:cursor-not-allowed"
             >
-              Start Over
+              <span
+                className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                  provider === 'openai' ? 'bg-emerald-500' : 'bg-blue-500'
+                }`}
+              />
+              Powered by {PROVIDER_LABEL[provider]}
             </button>
-          )}
+          </div>
         </div>
       </header>
 
@@ -105,7 +190,11 @@ function App() {
                 </div>
              </div>
              <h3 className="text-xl font-semibold text-slate-800 mb-2">{processingState.message}</h3>
-             <p className="text-slate-500 text-sm">This typically takes 5-10 seconds.</p>
+             <p className="text-slate-500 text-sm">
+               {provider === 'openai'
+                 ? 'This typically takes 30-60 seconds.'
+                 : 'This typically takes 5-10 seconds.'}
+             </p>
           </div>
         )}
 

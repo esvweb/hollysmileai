@@ -1,13 +1,18 @@
-export const generateSmileMakeover = async (base64Image: string): Promise<string> => {
+import { Provider } from '../types';
+
+export const generateSmileMakeover = async (
+  base64Image: string,
+  provider: Provider = 'gemini',
+): Promise<string> => {
   try {
-    // We now call our own backend API route to keep the API key secure.
-    // When deployed to Vercel, this points to the serverless function.
+    // We call our own backend route so the API keys stay on the server.
+    // The provider switch only tells the backend which one to use.
     const response = await fetch('/api/generate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ image: base64Image }),
+      body: JSON.stringify({ image: base64Image, provider }),
     });
 
     if (!response.ok) {
@@ -16,14 +21,14 @@ export const generateSmileMakeover = async (base64Image: string): Promise<string
     }
 
     const data = await response.json();
-    
+
     if (!data.image) {
-      throw new Error("No image returned from server.");
+      throw new Error('No image returned from server.');
     }
 
     return data.image;
   } catch (error) {
-    console.error("Smile Generation Error:", error);
+    console.error('Smile Generation Error:', error);
     throw error;
   }
 };
