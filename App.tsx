@@ -6,6 +6,13 @@ import { ProcessingState, Provider } from './types';
 
 const PROVIDER_STORAGE_KEY = 'smile-ai-provider';
 
+// Served from our own domain on purpose. The logo used to be hotlinked from
+// esvitaclinic.com, which is court-blocked in Turkey and answers on a
+// self-signed certificate, so the image never loaded for local visitors.
+// Drop the real file at public/esvita-logo.svg; until then the header falls
+// back to a plain wordmark instead of a broken-image icon.
+const LOGO_SRC = '/esvita-logo.svg';
+
 const PROVIDER_LABEL: Record<Provider, string> = {
   gemini: 'Gemini',
   openai: 'OpenAI',
@@ -41,6 +48,7 @@ function App() {
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [processingState, setProcessingState] = useState<ProcessingState>({ status: 'idle' });
   const [provider, setProvider] = useState<Provider>(readStoredProvider);
+  const [logoFailed, setLogoFailed] = useState(false);
   const timers = useRef<number[]>([]);
 
   const clearTimers = useCallback(() => {
@@ -102,11 +110,18 @@ function App() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img 
-              src="https://esvitaclinic.com/wp-content/uploads/2025/06/esvita-logo.svg" 
-              alt="Esvita Clinic" 
-              className="h-8 sm:h-10 w-auto object-contain"
-            />
+            {logoFailed ? (
+              <span className="text-lg sm:text-xl font-bold tracking-[0.2em] text-slate-800">
+                ESVITA
+              </span>
+            ) : (
+              <img
+                src={LOGO_SRC}
+                alt="Esvita Clinic"
+                className="h-8 sm:h-10 w-auto object-contain"
+                onError={() => setLogoFailed(true)}
+              />
+            )}
             <div className="hidden sm:block h-6 w-px bg-slate-200 mx-1"></div>
             <h1 className="hidden sm:block text-xl font-bold tracking-tight bg-gradient-to-r from-teal-600 to-blue-600 bg-clip-text text-transparent">
               Hollywood Smile AI
