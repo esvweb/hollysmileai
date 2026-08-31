@@ -1,3 +1,5 @@
+export type Provider = 'gemini' | 'openai';
+
 export interface ProcessingState {
   status: 'idle' | 'uploading' | 'processing' | 'success' | 'error';
   message?: string;

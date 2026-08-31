@@ -5,21 +5,69 @@ interface UploaderProps {
   disabled?: boolean;
 }
 
-export const Uploader: React.FC<UploaderProps> = ({ onImageSelected, disabled }) => {
-  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        alert("File is too large. Please upload an image under 5MB.");
-        return;
-      }
+// Vercel rejects any function request body over 4.5MB, and base64 inflates a
+// file by ~33%. A 5MB upload therefore became ~6.7MB and failed with a 413
+// before it ever reached the model. Downscaling here keeps us well under the
+// limit, and also makes generation faster and cheaper.
+const MAX_EDGE = 1536;
+const JPEG_QUALITY = 0.85;
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        onImageSelected(result);
+const downscaleImage = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(new Error('Could not read the selected file.'));
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const img = new Image();
+
+      img.onerror = () => reject(new Error('Could not read the selected image.'));
+      img.onload = () => {
+        const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+
+        // Small enough already: keep the original bytes untouched.
+        if (scale === 1 && dataUrl.length < 3_000_000) {
+          resolve(dataUrl);
+          return;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Could not process the image.'));
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', JPEG_QUALITY));
       };
-      reader.readAsDataURL(file);
+
+      img.src = dataUrl;
+    };
+
+    reader.readAsDataURL(file);
+  });
+
+export const Uploader: React.FC<UploaderProps> = ({ onImageSelected, disabled }) => {
+  const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 20 * 1024 * 1024) {
+      alert('File is too large. Please upload an image under 20MB.');
+      return;
+    }
+
+    try {
+      onImageSelected(await downscaleImage(file));
+    } catch (error: any) {
+      alert(error?.message || 'Could not read the selected image.');
+    } finally {
+      // Allow re-selecting the same file after a reset.
+      event.target.value = '';
     }
   }, [onImageSelected]);
 
@@ -40,7 +88,7 @@ export const Uploader: React.FC<UploaderProps> = ({ onImageSelected, disabled })
           </div>
           <p className="mb-2 text-lg font-semibold text-gray-700">Click to upload photo</p>
           <p className="text-sm text-gray-500">Selfies work best. Ensure teeth are visible.</p>
-          <p className="text-xs text-gray-400 mt-2">JPG, PNG or WEBP (MAX. 5MB)</p>
+          <p className="text-xs text-gray-400 mt-2">JPG, PNG or WEBP</p>
         </div>
         <input 
           type="file" 
